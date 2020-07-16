@@ -1,6 +1,7 @@
 package quilt
 
 import (
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -16,12 +17,44 @@ type GrannySquare struct {
 	outer  color.RGBA
 }
 
+func (g GrannySquare) String() string {
+	inner := fmt.Sprintf("#%.2x%.2x%.2x", g.inner.R, g.inner.G, g.inner.B)
+	middle := fmt.Sprintf("#%.2x%.2x%.2x", g.middle.R, g.middle.G, g.middle.B)
+	outer := fmt.Sprintf("#%.2x%.2x%.2x", g.outer.R, g.outer.G, g.outer.B)
+	return fmt.Sprintf("{outer:%s, middle:%s, inner:%s}", outer, middle, inner)
+}
+
 type Quilt struct {
 	width, height   int
 	colorsPerSquare int
 	colors          []color.RGBA
 	squareSet       map[GrannySquare]bool
 	grid            [][]GrannySquare
+}
+
+func getCoord(x, y int) (int, int) {
+	if x < 0 {
+		x = 0
+	}
+	if y < 0 {
+		y = 0
+	}
+	if y > 19 {
+		y = 19
+	}
+	if x > 15 {
+		x = 15
+	}
+
+	return x, y
+}
+
+func defaultSquare() GrannySquare {
+	return GrannySquare{
+		inner:  color.RGBA{0, 0, 0, 0},
+		middle: color.RGBA{0, 0, 0, 0},
+		outer:  color.RGBA{0, 0, 0, 0},
+	}
 }
 
 // factorial returns the factorial of x.
@@ -43,7 +76,9 @@ func New(width, height, colorsPerSquare int, colors []color.RGBA) *Quilt {
 	for x := 0; x < q.width; x++ {
 		q.grid[x] = make([]GrannySquare, q.height)
 	}
-	q.squareSet = make(map[GrannySquare]bool)
+	// squareSet is a map of all available squares and whether they are available
+	// for use.
+	q.squareSet = q.generateAvailableSquares()
 	return q
 }
 
@@ -52,101 +87,197 @@ func (q *Quilt) Combinations() int {
 	return factorial(len(q.colors)) / factorial(len(q.colors)-q.colorsPerSquare)
 }
 
+// Size returns the amount of squares in the grid.
 func (q *Quilt) Size() int {
 	return q.width * q.height
 }
 
-func (q *Quilt) UseLimit() int {
-	a := float64(float64(q.width*q.height) / float64(len(q.colors))) // 53.333
-	b := float64(a * float64(q.colorsPerSquare))                     // 319.99
-	return int(b)
+func (q *Quilt) generateAvailableSquares() map[GrannySquare]bool {
+	set := make(map[GrannySquare]bool)
+	for len(set) < q.Combinations() {
+		sq := q.GetUniqueSquare()
+		if ok := set[sq]; !ok {
+			set[sq] = true
+		}
+	}
+	return set
 }
 
-func (q *Quilt) PlaceSquares() {
-	squares := q.squareSet
-	placed := make(map[GrannySquare]int)
+func (q *Quilt) findSuitableSquare(x, y int) (*GrannySquare, error) {
+	for k, ok := range q.squareSet {
+		if !ok {
+			// not available for use, move on.
+			continue
+		}
+		if q.PassesValidation(x, y, k) {
+			return &k, nil
+		}
+	}
+	return nil, errors.New("unable to find a suitable square")
+}
 
+func (q *Quilt) GenerateQuilt() {
+	// pre-seed the quilt with some colours. This for the most part will just place
+	// random squares, as there are no neighbours to violate rules.
 	for x := 0; x < q.width; x++ {
 		for y := 0; y < q.height; y++ {
-			var match GrannySquare
-			foundMatch := false
-			for sq := range squares {
-				match = sq
-				foundMatch = true
-				break
+			sq, err := q.findSuitableSquare(x, y)
+			if err == nil {
+				q.grid[x][y] = *sq
 			}
 		}
+	}
+	// This can run infinitely if the rules are too restrictive.
+	q.findRuleOffenders()
+}
 
-		if !foundMatch {
-			fmt.Printf("couldn't find a match for x=%d,y=%d\n", x, y)
-			// q.Draw("/tmp/granny.png")
-			panic("nope")
-			//q.PlaceSquares()
-		}
-
-		q.grid[x][y] = match
-		placed[match]++
-		if placed[match] == 3 {
-			delete(squares, match)
+// Loop through a pre-generated grid and replace squares that violate any rules.
+// If there are no suitable squares for the exact co-ordinate then remove all
+// neighours and try again. This will run infinitely until a grid that satisfies
+// the rules completes.
+func (q *Quilt) findRuleOffenders() {
+	for x := 0; x < q.width; x++ {
+		for y := 0; y < q.height; y++ {
+			if !q.PassesValidation(x, y, q.grid[x][y]) {
+				sq, err := q.findSuitableSquare(x, y)
+				if err == nil {
+					q.grid[x][y] = *sq
+				} else {
+					q.DeleteNeighbours(x, y)
+				}
+				q.findRuleOffenders()
+			}
 		}
 	}
 }
 
-// func (q *Quilt) PlaceSquares() {
-// 	squares := q.squareSet
-// 	placed := make(map[GrannySquare]int)
-
-// 	for x := 0; x < q.width; x++ {
-// 		for y := 0; y < q.height; y++ {
-// 			var match GrannySquare
-// 			foundMatch := false
-// 			for sq := range squares {
-// 				if q.PassesValidation(x, y, sq) {
-// 					match = sq
-// 					foundMatch = true
-// 					break
-// 				}
-// 			}
-
-// 			if !foundMatch {
-// 				fmt.Printf("couldn't find a match for x=%d,y=%d\n", x, y)
-// 				// q.Draw("/tmp/granny.png")
-// 				panic("nope")
-// 				//q.PlaceSquares()
-// 			}
-
-// 			q.grid[x][y] = match
-// 			placed[match]++
-// 			if placed[match] == 3 {
-// 				delete(squares, match)
-// 			}
-// 		}
-// 	}
-// }
-
+// PassesValidation aggregates the rules and returns false if any of them fail,
+// or true if otherwise.
 func (q *Quilt) PassesValidation(x, y int, proposed GrannySquare) bool {
-	for _, r := range GetRules() {
-		if !r.Validates(x, y, proposed, *q) {
+	if proposed == defaultSquare() {
+		return false
+	}
+	if q.UsedMoreThanNTimes(3, proposed) {
+		return false
+	}
+	if !q.NoSidesMatch(x, y, proposed) {
+		return false
+	}
+	if !q.NoSameMiddleAndInner(x, y, proposed) {
+		return false
+	}
+	// if !q.NoSameThreeColours(x, y, proposed) {
+	// 	return false
+	// }
+	return true
+}
+
+func (q *Quilt) UsedMoreThanNTimes(n int, g GrannySquare) bool {
+	seen := 0
+	for x := 0; x < q.width; x++ {
+		for y := 0; y < q.height; y++ {
+			if q.grid[x][y] == g {
+				seen++
+			}
+		}
+	}
+	return seen > n
+}
+
+func (q *Quilt) DeleteNeighbours(x, y int) {
+	var positions = [8][2]int{
+		{-1, 1}, {0, 1}, {1, 1},
+		{-1, 0}, {1, 0},
+		{-1, -1}, {0, -1}, {1, -1},
+	}
+
+	for _, pos := range positions {
+		x2, y2 := getCoord(x+pos[0], y+pos[1])
+		// we are checking ourselves...
+		if x2 == x && y2 == y {
+			continue
+		}
+
+		q.grid[x2][y2] = defaultSquare()
+	}
+}
+
+func (q *Quilt) NoSidesMatch(x, y int, proposed GrannySquare) bool {
+	// positions contains the relative distance between the current square and
+	// it's neighbours.
+	var positions = [8][2]int{
+		{-1, 1}, {0, 1}, {1, 1},
+		{-1, 0}, {1, 0},
+		{-1, -1}, {0, -1}, {1, -1},
+	}
+
+	for _, pos := range positions {
+		x2, y2 := getCoord(x+pos[0], y+pos[1])
+
+		// we are checking ourselves...
+		if x2 == x && y2 == y {
+			return true
+		}
+
+		if proposed.outer == q.grid[x2][y2].outer {
 			return false
 		}
 	}
 	return true
 }
 
-// GenerateSquares pre-generates all combinations of squares available.
-func (q *Quilt) GenerateSquares() map[GrannySquare]bool {
-	set := make(map[GrannySquare]bool) // New empty set
+func (q *Quilt) NoSameMiddleAndInner(x, y int, proposed GrannySquare) bool {
+	// positions contains the relative distance between the current square and
+	// it's neighbours.
+	var positions = [4][2]int{
+		{0, 1},
+		{-1, 0}, {1, 0},
+		{0, -1},
+	}
 
-	for i := 0; i < q.Combinations(); i++ {
-		for {
-			sq := q.GetUniqueSquare()
-			if ok := set[sq]; !ok {
-				set[sq] = true
-				break
-			}
+	for _, pos := range positions {
+		x2, y2 := getCoord(x+pos[0], y+pos[1])
+
+		// we are checking ourselves...
+		if x2 == x && y2 == y {
+			return true
+		}
+
+		if proposed.middle == q.grid[x2][y2].middle && proposed.inner == q.grid[x2][y2].inner {
+			return false
 		}
 	}
-	return set
+	return true
+}
+
+func (q *Quilt) NoSameThreeColours(x, y int, proposed GrannySquare) bool {
+	// positions contains the relative distance between the current square and
+	// it's neighbours.
+	var positions = [4][2]int{
+		{0, 1},
+		{-1, 0}, {1, 0},
+		{0, -1},
+	}
+	for _, pos := range positions {
+		x2, y2 := getCoord(x+pos[0], y+pos[1])
+
+		// we are checking ourselves...
+		if x2 == x && y2 == y {
+			return true
+		}
+
+		c := q.grid[x2][y2]
+		if proposed.outer == c.inner || proposed.outer == c.middle || proposed.outer == c.outer {
+			return false
+		}
+		if proposed.middle == c.inner || proposed.middle == c.middle || proposed.middle == c.outer {
+			return false
+		}
+		if proposed.inner == c.inner || proposed.inner == c.middle || proposed.inner == c.outer {
+			return false
+		}
+	}
+	return true
 }
 
 func (q *Quilt) GetUniqueSquare() GrannySquare {
@@ -168,16 +299,11 @@ func (q *Quilt) GetUniqueSquare() GrannySquare {
 		middle: generated[1],
 		outer:  generated[2],
 	}
-	// If this a unique square return it.
-	if ok := q.squareSet[gen]; !ok {
-		q.squareSet[gen] = true
-		return gen
-	}
 
-	// Or try again.
-	return q.GetUniqueSquare()
+	return gen
 }
 
+// Draw takes a filename and generates a PNG representation of the current grid.
 func (q *Quilt) Draw(filename string) {
 	squareSize := 40
 	quiltImage := image.NewRGBA(image.Rect(0, 0, q.width*squareSize, q.height*squareSize))
@@ -209,16 +335,3 @@ func (q *Quilt) Draw(filename string) {
 	defer myfile.Close()
 	png.Encode(myfile, quiltImage)
 }
-
-// func (q *Quilt) Used() string {
-// 	var s strings.Builder
-// 	m := make(map[color.RGBA]int)
-// 	s.WriteString(fmt.Sprintf("Used the following colours:\n"))
-// 	for square := range q.squareSet {
-// 		m[square.inner]++
-// 		m[square.middle]++
-// 		m[square.outer]++
-// 	}
-// 	s.WriteString(fmt.Sprintf("%v\n", m))
-// 	return s.String()
-// }

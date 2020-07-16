@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"image/color"
 
 	"github.com/michaelmcallister/grannysquare/quilt"
@@ -23,10 +22,6 @@ func main() {
 	yarns := []color.RGBA{red, white, blue, green, purple, yellow}
 
 	q := quilt.New(16, 20, 3, yarns)
-	fmt.Printf("quilt has %d combinations...\n", q.Combinations())
-	fmt.Printf("generating all permuations...\n")
-	out := q.GenerateSquares()
-	fmt.Printf("generated %d squares\n", len(out))
 	q.GenerateQuilt()
-	q.Draw("/tmp/granny.png")
+	q.Draw("/tmp/grannysquare.png")
 }
